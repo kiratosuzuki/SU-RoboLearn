@@ -18,17 +18,20 @@ EditorBuildSettings:
     path: Assets/SIGVerse/ExampleScenes/HSR/HsrCleanupVRwithMotionRecorder.unity
     guid: fd1fd164787fbff48a7350b557e86b66
   - enabled: 0
-    path: Assets/SU-RoboLearn/main.unity
-    guid: 8a4d24f52f59309429a7a5ecce75a181
+    path: 
+    guid: 00000000000000000000000000000000
   - enabled: 0
-    path: "Assets/SOBIT\u03B2/sub.unity"
-    guid: def2e90612fcd7844a6a59c5f6ea7ad6
-  - enabled: 0
+    path: 
+    guid: 00000000000000000000000000000000
+  - enabled: 1
     path: Assets/SU-RoboLearn/tutorial.unity
     guid: 8e2a02924db3e9143aea64c19c6533af
-  - enabled: 1
-    path: Assets/SU-RoboLearn/Empty.unity
-    guid: dc0b747d964f181449b5cd449eaea451
+  - enabled: 0
+    path: 
+    guid: 00000000000000000000000000000000
+  - enabled: 0
+    path: Assets/SU-RoboLearn/main 1.unity
+    guid: b1b3efc645241484f9006211a982f306
   m_configObjects:
     Unity.XR.Oculus.Settings: {fileID: 11400000, guid: 6438385ef2a40ad41a4463c822ba36de,
       type: 2}

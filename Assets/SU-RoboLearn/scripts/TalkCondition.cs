@@ -21,6 +21,10 @@ public class TalkCondition : MonoBehaviour
     [Header("Condition  ※グループ間はAND・グループ内はOR  ※{wantItem}{wantItem2}{wantItem3}{soldOutItem}{soldOutItem2}{soldOutItem3}{dummyItem}{kitchenSide}{customerTable}")]
     public KeywordGroup[] keywordGroups;
 
+    [Header("Progress (複数回の発話にまたがってグループを満たす場合)")]
+    [Tooltip("この秒数、新しいグループ達成がなければ進行状態をリセットする")]
+    public float progressResetSeconds = 30f;
+
     [Header("Reply (空欄なら返答なし)  ※プレースホルダー使用可")]
     public string replyText;
     public SpeechBubble npcBubble;
@@ -36,14 +40,22 @@ public class TalkCondition : MonoBehaviour
     [Header("On Completed")]
     public UnityEvent onCompleted;
 
+    bool[] groupAchieved;
+    float lastProgressTime = -999f;
+
+    void Awake()
+    {
+        groupAchieved = new bool[keywordGroups != null ? keywordGroups.Length : 0];
+    }
+
     public bool CanAttemptNow()
         => !FreeTaskManager.Instance.IsCompleted(taskName)
         && FreeTaskManager.Instance.CanAttempt(prerequisites);
 
     public string TryComplete(string text)
     {
-        if (!IsMatch(text)) return null;
         if (FreeTaskManager.Instance.IsCompleted(taskName)) return null;
+        if (!UpdateProgress(text)) return null;
 
         bool isBeta = hasDifficulty
             && CompetitionSettings.Instance != null
@@ -58,27 +70,48 @@ public class TalkCondition : MonoBehaviour
         return string.IsNullOrEmpty(reply) ? null : reply;
     }
 
-    bool IsMatch(string text)
+    // 未達成のグループのうち、この発話でマッチしたものを達成済みにする。
+    // Scratch側はブロックごとに発話を分けて送ってくるため、複数回の発話にまたがって
+    // 少しずつグループを満たしていく想定（一定時間進捗がなければリセットする）。
+    // 全グループが達成済みになったら true を返す。
+    bool UpdateProgress(string text)
     {
         if (keywordGroups == null || keywordGroups.Length == 0) return false;
 
-        foreach (var group in keywordGroups)
+        if (Time.time - lastProgressTime > progressResetSeconds)
+            System.Array.Clear(groupAchieved, 0, groupAchieved.Length);
+
+        text = NormalizeDirection(text);
+
+        bool anyNewMatch = false;
+        for (int i = 0; i < keywordGroups.Length; i++)
         {
+            if (groupAchieved[i]) continue;
+
+            var group = keywordGroups[i];
             if (group.keywords == null || group.keywords.Length == 0) continue;
 
-            bool anyMatch = false;
             foreach (var kw in group.keywords)
             {
                 if (!string.IsNullOrEmpty(kw) && text.Contains(Resolve(kw)))
                 {
-                    anyMatch = true;
+                    groupAchieved[i] = true;
+                    anyNewMatch = true;
                     break;
                 }
             }
-            if (!anyMatch) return false;
         }
+
+        if (anyNewMatch) lastProgressTime = Time.time;
+
+        foreach (bool achieved in groupAchieved)
+            if (!achieved) return false;
+
         return true;
     }
+
+    static string NormalizeDirection(string text)
+        => text.Replace("みぎ", "右").Replace("ひだり", "左");
 
     System.Collections.IEnumerator SayDelayed(string reply)
     {

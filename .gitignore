@@ -101,3 +101,6 @@ SIGVerse*.log
 /Assets/VRM*
 /Assets/VRMShaders*
 
+# SessionLogger output
+session_log.csv
+

@@ -7,37 +7,50 @@ public class FreeCameraController : MonoBehaviour
 
     private float yaw;
     private float pitch;
+    private bool lookMode = false;
 
 
     void Update()
     {
-        // クリック開始を検出
+        // 右クリックで視点操作モードをトグル
         if (Input.GetMouseButtonDown(1))
         {
-            // 今のカメラ角度を yaw/pitch に反映する
-            Vector3 angles = transform.eulerAngles;
-            yaw = angles.y;
-            pitch = angles.x;
-            if (pitch > 180f) pitch -= 360f;
+            lookMode = !lookMode;
 
-            Cursor.lockState = CursorLockMode.Locked;
-            Cursor.visible = false;
+            if (lookMode)
+            {
+                // 今のカメラ角度を yaw/pitch に反映する
+                Vector3 angles = transform.eulerAngles;
+                yaw = angles.y;
+                pitch = angles.x;
+                if (pitch > 180f) pitch -= 360f;
+
+                Cursor.lockState = CursorLockMode.Locked;
+                Cursor.visible = false;
+            }
+            else
+            {
+                Cursor.lockState = CursorLockMode.None;
+                Cursor.visible = true;
+            }
         }
 
-        // クリック中なら視点回転
-        if (Input.GetMouseButton(1))
+        // Escキーでも視点操作モードを解除できる
+        if (lookMode && Input.GetKeyDown(KeyCode.Escape))
+        {
+            lookMode = false;
+            Cursor.lockState = CursorLockMode.None;
+            Cursor.visible = true;
+        }
+
+        // 視点操作モード中は視点回転
+        if (lookMode)
         {
             yaw += lookSpeed * Input.GetAxis("Mouse X");
             pitch -= lookSpeed * Input.GetAxis("Mouse Y");
             pitch = Mathf.Clamp(pitch, -90f, 90f);
 
             transform.eulerAngles = new Vector3(pitch, yaw, 0f);
-        }
-
-        if (Input.GetMouseButtonUp(1))
-        {
-            Cursor.lockState = CursorLockMode.None;
-            Cursor.visible = true;
         }
         // 水平移動（WASD）
         float x = Input.GetAxis("Horizontal");

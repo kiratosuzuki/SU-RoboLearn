@@ -55,7 +55,7 @@ public class InitialRandomSettings : MonoBehaviour
     public string dummyItem;     // ダミー     ({dummyItem})
 
     // idx=0 → "右"、idx=1 → "左"  ({kitchenSide})
-    public string kitchenSide => idx == 0 ? "左" : "右";
+    public string kitchenSide => idx == 0 ? "右" : "左";
 
     // cusidx → テーブル番号文字列  ({customerTable})
     // 0→"1"、1→"2"、2→"3"、3→"2"（pos3はpos1と同じ番号扱い）

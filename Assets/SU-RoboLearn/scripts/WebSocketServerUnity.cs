@@ -26,6 +26,15 @@ public class WebSocketServerUnity : MonoBehaviour
     [Header("Talk Reply Delay")]
     public float replyDelay = 4f;
 
+    [Header("Talk Block (会話中は移動コマンドをブロックする時間)")]
+    public float talkBlockDuration = 4f;
+
+    [Header("Noise Settings (実環境ノイズ再現)")]
+    [Tooltip("move指令に対する実移動量の倍率(%)。100が指令通り、110なら常に1.1倍")]
+    [Range(50f, 150f)] public float moveNoisePercent = 100f;
+    [Tooltip("turn指令に対する実回転量の倍率(%)。100が指令通り、110なら常に1.1倍")]
+    [Range(50f, 150f)] public float turnNoisePercent = 100f;
+
 
     // Movement parameters
     private float linearSpeed = 0.5f;
@@ -34,12 +43,9 @@ public class WebSocketServerUnity : MonoBehaviour
     // Movement state
     private bool isExecuting = false;
     private string currentCommand = "";
-    private Vector3 targetPosition;
-    private Quaternion targetRotation;
-    private string talkText = "";
+    private float turnDirSign = 1f;
 
-    // Timeout
-    public float timeoutMargin = 1.2f;
+    // Duration
     private float moveTimer = 0f;
     private float moveTimeout = 0f;
 
@@ -52,8 +58,12 @@ public class WebSocketServerUnity : MonoBehaviour
     // Camera publish
     private float cameraScanTimer = 0f;
 
+    // Talk block: 会話中（発話断片の受付〜応答確定まで）は移動コマンドを止める
+    private float talkBlockUntilTime = 0f;
+
     // Command queue (written from WS thread, read from main thread)
     private readonly Queue<Command> commandQueue = new Queue<Command>();
+    private readonly Queue<string> talkQueue = new Queue<string>();
 
     private struct Command
     {
@@ -95,11 +105,26 @@ public class WebSocketServerUnity : MonoBehaviour
         Debug.Log("  reply    → ws://localhost:8080/unity/reply");
     }
 
+    void OnTalkReplyReady(string reply)
+    {
+        // 応答表示中も移動をブロックしておく
+        talkBlockUntilTime = Time.time + replyDelay;
+        StartCoroutine(BroadcastReplyAndDone(reply));
+    }
+
+    private System.Collections.IEnumerator BroadcastReplyAndDone(string reply)
+    {
+        yield return new WaitForSeconds(replyDelay);
+        Broadcast("/unity/reply", reply);
+        Broadcast("/unity/response", "done:talk");
+    }
+
     void OnDestroy() => wssv?.Stop();
     void OnApplicationQuit() => wssv?.Stop();
 
     void Update()
     {
+        ProcessTalkQueue();
         ProcessMovement();
         PublishCamera();
     }
@@ -110,6 +135,14 @@ public class WebSocketServerUnity : MonoBehaviour
     // ======================================================
     private void EnqueueRaw(string msg)
     {
+        if (msg.StartsWith("talk:"))
+        {
+            string text = msg.Substring(5).Trim();
+            lock (talkQueue)
+                talkQueue.Enqueue(text);
+            return;
+        }
+
         Command cmd = Parse(msg);
         lock (commandQueue)
             commandQueue.Enqueue(cmd);
@@ -118,13 +151,6 @@ public class WebSocketServerUnity : MonoBehaviour
     private Command Parse(string msg)
     {
         var cmd = new Command { type = msg, value = 0f };
-
-        if (msg.StartsWith("talk:"))
-        {
-            cmd.type = "talk";
-            talkText = msg.Substring(5).Trim();
-            return cmd;
-        }
 
         if (msg.Contains(":"))
         {
@@ -138,6 +164,29 @@ public class WebSocketServerUnity : MonoBehaviour
         }
 
         return cmd;
+    }
+
+
+    // ======================================================
+    // talk受付 (isExecutingのロックとは独立に、届き次第すぐ処理する)
+    // ======================================================
+    private void ProcessTalkQueue()
+    {
+        while (true)
+        {
+            string text;
+            lock (talkQueue)
+            {
+                if (talkQueue.Count == 0) return;
+                text = talkQueue.Dequeue();
+            }
+
+            bubble.Say(text);
+            TTSManager.Instance?.Speak(text);
+            string reply = talkGoal.HandleUserText(text);
+            talkBlockUntilTime = Time.time + talkBlockDuration;
+            OnTalkReplyReady(reply);
+        }
     }
 
 
@@ -161,6 +210,9 @@ public class WebSocketServerUnity : MonoBehaviour
     private void ProcessMovement()
     {
         if (baseFootprint == null) return;
+
+        // 会話中（発話断片の受付〜応答確定・表示まで）は移動コマンドをブロック
+        if (Time.time < talkBlockUntilTime) return;
 
         // 遅延待ち
         if (delayMode)
@@ -191,14 +243,15 @@ public class WebSocketServerUnity : MonoBehaviour
                 if (currentCommand == "move")
                 {
                     float dist = cmd.hasValue ? Mathf.Abs(cmd.value) / 100f : 1.0f;
-                    targetPosition = baseFootprint.position + (-baseFootprint.right * dist);
-                    moveTimeout = dist / linearSpeed * timeoutMargin;
+                    dist *= moveNoisePercent / 100f;
+                    moveTimeout = dist / linearSpeed;
                 }
                 else if (currentCommand == "turn")
                 {
                     float angle = cmd.hasValue ? cmd.value : 90f;
-                    targetRotation = baseFootprint.rotation * Quaternion.AngleAxis(angle, Vector3.forward);
-                    moveTimeout = Mathf.Abs(angle) / angularSpeed * timeoutMargin;
+                    angle *= turnNoisePercent / 100f;
+                    turnDirSign = Mathf.Sign(angle);
+                    moveTimeout = Mathf.Abs(angle) / angularSpeed;
                 }
 
                 isExecuting = true;
@@ -213,9 +266,8 @@ public class WebSocketServerUnity : MonoBehaviour
             case "move":
             {
                 moveTimer += Time.deltaTime;
-                baseFootprint.position = Vector3.MoveTowards(
-                    baseFootprint.position, targetPosition, linearSpeed * Time.deltaTime);
-                if (baseFootprint.position == targetPosition || moveTimer >= moveTimeout)
+                baseFootprint.position += -baseFootprint.right * linearSpeed * Time.deltaTime;
+                if (moveTimer >= moveTimeout)
                 {
                     isExecuting = false;
                     Broadcast("/unity/response", "done:move");
@@ -226,23 +278,12 @@ public class WebSocketServerUnity : MonoBehaviour
             case "turn":
             {
                 moveTimer += Time.deltaTime;
-                baseFootprint.rotation = Quaternion.RotateTowards(
-                    baseFootprint.rotation, targetRotation, angularSpeed * Time.deltaTime);
-                if (baseFootprint.rotation == targetRotation || moveTimer >= moveTimeout)
+                baseFootprint.rotation *= Quaternion.AngleAxis(angularSpeed * turnDirSign * Time.deltaTime, Vector3.forward);
+                if (moveTimer >= moveTimeout)
                 {
                     isExecuting = false;
                     Broadcast("/unity/response", "done:turn");
                 }
-                break;
-            }
-
-            case "talk":
-            {
-                bubble.Say(talkText);
-                TTSManager.Instance?.Speak(talkText);
-                string reply = talkGoal.HandleUserText(talkText);
-                StartCoroutine(BroadcastDelayed("/unity/reply", reply, replyDelay));
-                StartDelay(4f, "done:talk");
                 break;
             }
 
@@ -306,12 +347,6 @@ public class WebSocketServerUnity : MonoBehaviour
     // ======================================================
     // ブロードキャスト
     // ======================================================
-    private System.Collections.IEnumerator BroadcastDelayed(string path, string message, float delay)
-    {
-        yield return new WaitForSeconds(delay);
-        Broadcast(path, message);
-    }
-
     private void Broadcast(string path, string message)
     {
         try
